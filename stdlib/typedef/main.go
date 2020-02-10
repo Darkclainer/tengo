@@ -33,6 +33,10 @@ type Function struct {
 	wrapper *Signature
 }
 
+func (f *Function) StringSignature() string {
+	return f.input.String()
+}
+
 var basicTypesAbbrev = map[types.BasicKind]string{
 	types.Bool:    "B",
 	types.Float64: "F",
@@ -127,7 +131,7 @@ func NewFunction(sign *types.Signature) (*Function, error) {
 
 type Generator struct {
 	// functions maps string representation of Signature to Function
-	functions map[string]Function
+	functions map[string]*Function
 	// calls maps string representation of Signature to actual place where TransformTo should be replaced with generated function
 	calls map[string][]*ast.Ident
 	// fileSet needed for mapping between ast.Ident and actual files
@@ -136,7 +140,7 @@ type Generator struct {
 
 func NewGenerator(pkg *packages.Package) (*Generator, error) {
 	generator := &Generator{
-		functions: make(map[string]Function),
+		functions: make(map[string]*Function),
 		calls:     make(map[string][]*ast.Ident),
 		fileSet:   pkg.Fset,
 	}
@@ -211,20 +215,37 @@ func (g *Generator) gatherCallsFromNode(info *types.Info, n ast.Node, functionNa
 		)
 	}
 	//fmt.Printf("call %s -> %s\n", ident.Name, argIdent.String())
-	return g.addCall(argSignature)
+	return g.addCall(ident, argSignature)
 }
-func (g *Generator) addCall(sign *types.Signature) error {
+func (g *Generator) addCall(call *ast.Ident, sign *types.Signature) error {
 	function, err := NewFunction(sign)
 	if err != nil {
-		fmt.Printf("Error! %s\n", err)
-		return nil
+		return fmt.Errorf("failed convert call %s to internal function representation: %w",
+			g.getPosition(call.Pos()),
+			err,
+		)
 	}
-	fmt.Printf("Fuction: %s [%s]\n", function.name, function.input)
-	//NewSignature(sign)
-	//TODO: WIP
+	signatureKey := function.StringSignature()
+	existingFunction, ok := g.functions[signatureKey]
+	if ok == true {
+		log.Printf("Add function %s for call %s\n",
+			existingFunction.name,
+			g.getPosition(call.Pos()),
+		)
+		calls := g.calls[signatureKey]
+		calls = append(calls, call)
+		return nil
+
+	}
+	fmt.Printf("Found call to new function %s [%s] at %s\n",
+		function.name,
+		sign.String(),
+		g.getPosition(call.Pos()),
+	)
+	g.functions[signatureKey] = function
+	calls := g.calls[signatureKey]
+	calls = append(calls, call)
 	return nil
-}
-func (g *Generator) addFunction() {
 }
 func convertTypeToFuncName(sign *types.Signature) string {
 	//fmt.Printf("Signature: %s\n", NewSignature(sign))
