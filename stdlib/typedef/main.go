@@ -7,7 +7,6 @@ import (
 	"go/token"
 	"go/types"
 	"log"
-	"strings"
 
 	"golang.org/x/tools/go/packages"
 )
@@ -25,108 +24,6 @@ func main() {
 	}
 	fmt.Printf("Pkgs: %v\n\n", pkg.String())
 	NewGenerator(pkg)
-}
-
-type Function struct {
-	name    string
-	input   *Signature
-	wrapper *Signature
-}
-
-func (f *Function) StringSignature() string {
-	return f.input.String()
-}
-
-var basicTypesAbbrev = map[types.BasicKind]string{
-	types.Bool:    "B",
-	types.Float64: "F",
-	types.Int64:   "I64",
-	types.Int:     "I",
-	types.String:  "S",
-}
-
-func getBasicTypeAbbrev(b *types.Basic) (string, error) {
-	abbrev, ok := basicTypesAbbrev[b.Kind()]
-	if ok == false {
-		return "", fmt.Errorf("can not abbreviate basic type %s", b.Name())
-	}
-	return abbrev, nil
-}
-func getSliceTypeAbbrev(s *types.Slice) (string, error) {
-	elem := s.Elem()
-	elemBasic, ok := elem.(*types.Basic)
-	if ok == false {
-		return "", fmt.Errorf("can not convert slice's element type %s to basic type", elem.String())
-	}
-	elemAbbrev, err := getBasicTypeAbbrev(elemBasic)
-	if err != nil {
-		return "", fmt.Errorf("can not abbreviate slice type %s: %w", s.String(), err)
-	}
-	return elemAbbrev + "s", nil
-}
-
-var namedTypesAbbrev = map[string]string{
-	"error": "E",
-}
-
-func getNamedTypeAbbrev(s *types.Named) (string, error) {
-	abbrev, ok := namedTypesAbbrev[s.String()]
-	if ok == false {
-		return "", fmt.Errorf("can not abbreviate named type: %s", s.String())
-	}
-	return abbrev, nil
-}
-
-func getTypeAbbrev(item types.Type) (string, error) {
-	switch t := item.(type) {
-	case *types.Basic:
-		return getBasicTypeAbbrev(t)
-	case *types.Slice:
-		return getSliceTypeAbbrev(t)
-	case *types.Named:
-		return getNamedTypeAbbrev(t)
-	default:
-		return "", fmt.Errorf("can not abbreviate type %s", item.String())
-	}
-}
-func assembleTupleAbbrev(tuple *types.Tuple) (string, error) {
-	abbrevs := make([]string, tuple.Len())
-	for i := 0; i < tuple.Len(); i++ {
-		item := tuple.At(i).Type()
-		abbrev, err := getTypeAbbrev(item)
-		if err != nil {
-			return "", fmt.Errorf("can not abbreviate tuple %s: %w", tuple.String(), err)
-		}
-		abbrevs[i] = abbrev
-	}
-	return strings.Join(abbrevs, ""), nil
-}
-func assembleFunctionName(sign *types.Signature) (string, error) {
-	paramsAbbrev, err := assembleTupleAbbrev(sign.Params())
-	if err != nil {
-		return "", fmt.Errorf("can not abbreviate function's %s params: %w", sign.String(), err)
-	}
-	resultAbbrev, err := assembleTupleAbbrev(sign.Results())
-	if err != nil {
-		return "", fmt.Errorf("can not abbreviate function's %s results: %w", sign.String(), err)
-	}
-	return fmt.Sprintf("FuncA%sR%s", paramsAbbrev, resultAbbrev), nil
-}
-
-func NewFunction(sign *types.Signature) (*Function, error) {
-	inputSign, err := NewSignature(sign)
-	if err != nil {
-		return nil, err
-	}
-	functionName, err := assembleFunctionName(sign)
-	if err != nil {
-		return nil, fmt.Errorf("can not assemble function name: %w", err)
-	}
-	return &Function{
-		name:    functionName,
-		input:   inputSign,
-		wrapper: inputSign,
-	}, nil
 }
 
 type Generator struct {
@@ -220,6 +117,10 @@ func (g *Generator) gatherCallsFromNode(info *types.Info, n ast.Node, functionNa
 func (g *Generator) addCall(call *ast.Ident, sign *types.Signature) error {
 	function, err := NewFunction(sign)
 	if err != nil {
+		log.Printf("failed convert call %s to internal function representation: %v",
+			g.getPosition(call.Pos()),
+			err,
+		)
 		return fmt.Errorf("failed convert call %s to internal function representation: %w",
 			g.getPosition(call.Pos()),
 			err,
@@ -228,7 +129,7 @@ func (g *Generator) addCall(call *ast.Ident, sign *types.Signature) error {
 	signatureKey := function.StringSignature()
 	existingFunction, ok := g.functions[signatureKey]
 	if ok == true {
-		log.Printf("Add function %s for call %s\n",
+		log.Printf("Add call for function %s at %s\n",
 			existingFunction.name,
 			g.getPosition(call.Pos()),
 		)
@@ -237,7 +138,7 @@ func (g *Generator) addCall(call *ast.Ident, sign *types.Signature) error {
 		return nil
 
 	}
-	fmt.Printf("Found call to new function %s [%s] at %s\n",
+	log.Printf("Found call to new function %s [%s] at %s\n",
 		function.name,
 		sign.String(),
 		g.getPosition(call.Pos()),
@@ -246,46 +147,6 @@ func (g *Generator) addCall(call *ast.Ident, sign *types.Signature) error {
 	calls := g.calls[signatureKey]
 	calls = append(calls, call)
 	return nil
-}
-func convertTypeToFuncName(sign *types.Signature) string {
-	//fmt.Printf("Signature: %s\n", NewSignature(sign))
-	/*
-
-		params := sign.Params()
-		for i := 0; i < params.Len(); i++ {
-			param := params.At(i)
-			fmt.Printf("Param %d: (%s) %#v\n", i, param.Type().String(), param.Type())
-		}
-		params = sign.Results()
-		for i := 0; i < params.Len(); i++ {
-			param := params.At(i)
-			fmt.Printf("Result %d: (%s) %#v\n", i, param.Type().String(), param.Type().Underlying())
-		}
-	*/
-	return "FuncA"
-}
-
-type Signature struct {
-	params  []string
-	results []string
-}
-
-func tupleTypeToString(t *types.Tuple) []string {
-	result := make([]string, t.Len())
-	for i := 0; i < t.Len(); i++ {
-		result[i] = t.At(i).Type().String()
-	}
-	return result
-}
-func NewSignature(sign *types.Signature) (*Signature, error) {
-	return &Signature{
-		params:  tupleTypeToString(sign.Params()),
-		results: tupleTypeToString(sign.Results()),
-	}, nil
-
-}
-func (s *Signature) String() string {
-	return fmt.Sprintf("(%s) -> (%s)", strings.Join(s.params, ", "), strings.Join(s.results, ", "))
 }
 
 func findFuncACallStatements(scope *types.Scope) {
